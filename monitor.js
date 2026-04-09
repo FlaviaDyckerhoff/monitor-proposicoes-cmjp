@@ -7,11 +7,11 @@ const EMAIL_SENHA = process.env.EMAIL_SENHA;
 const ARQUIVO_ESTADO = 'estado.json';
 const API_BASE = 'https://sapl.joaopessoa.pb.leg.br/api';
 
-// A API da ALPB ignora o parâmetro ordering e sempre retorna em ordem
-// crescente de ID (menor para maior). Ou seja, as proposições mais recentes
-// estão sempre nas ÚLTIMAS páginas, não na primeira.
+// A API da CMJP ignora o parâmetro ordering e sempre retorna em ordem
+// crescente de ID (menor para maior). As proposições mais recentes estão
+// sempre nas ÚLTIMAS páginas, não na primeira.
 // Estratégia: descobrir o total de páginas e buscar as 2 últimas
-// (200 proposições), o que cobre qualquer volume entre execuções.
+// (200 proposições), cobrindo qualquer volume entre execuções.
 
 function carregarEstado() {
   if (fs.existsSync(ARQUIVO_ESTADO)) {
@@ -30,6 +30,12 @@ function extrairTipo(str) {
   return match ? match[1].trim().toUpperCase() : str.split(' ').slice(0, 3).join(' ').toUpperCase();
 }
 
+function ordenarTipos(tipos) {
+  const reqs = tipos.filter(t => t.startsWith('REQ')).sort();
+  const outros = tipos.filter(t => !t.startsWith('REQ')).sort();
+  return [...outros, ...reqs];
+}
+
 async function enviarEmail(novas) {
   const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -42,8 +48,25 @@ async function enviarEmail(novas) {
     porTipo[p.tipo].push(p);
   });
 
-  const linhas = Object.keys(porTipo).sort().map(tipo => {
-    const header = `<tr><td colspan="4" style="padding:10px 8px 4px;background:#f0f4f8;font-weight:bold;color:#1a3a5c;font-size:13px;border-top:2px solid #1a3a5c">${tipo} — ${porTipo[tipo].length} proposição(ões)</td></tr>`;
+  const totalReqs = Object.keys(porTipo)
+    .filter(t => t.startsWith('REQ'))
+    .reduce((acc, t) => acc + porTipo[t].length, 0);
+  const totalOutros = novas.length - totalReqs;
+
+  const tiposOrdenados = ordenarTipos(Object.keys(porTipo));
+  const primeiroReqIdx = tiposOrdenados.findIndex(t => t.startsWith('REQ'));
+
+  const linhas = tiposOrdenados.map((tipo, idx) => {
+    const isReq = tipo.startsWith('REQ');
+    const bgHeader = isReq ? '#f5f0eb' : '#f0f4f8';
+    const colorHeader = isReq ? '#5c3a1a' : '#1a3a5c';
+    const borderColor = isReq ? '#5c3a1a' : '#1a3a5c';
+
+    const separador = (isReq && idx === primeiroReqIdx && totalOutros > 0)
+      ? `<tr><td colspan="4" style="padding:8px;background:#fff8f0;font-size:12px;color:#999;border-top:3px dashed #ddd;text-align:center">⬇️ Requerimentos (${totalReqs})</td></tr>`
+      : '';
+
+    const header = `<tr><td colspan="4" style="padding:10px 8px 4px;background:${bgHeader};font-weight:bold;color:${colorHeader};font-size:13px;border-top:2px solid ${borderColor}">${tipo} — ${porTipo[tipo].length} proposição(ões)</td></tr>`;
     const rows = porTipo[tipo].map(p =>
       `<tr>
         <td style="padding:8px;border-bottom:1px solid #eee"><strong>${p.numero}/${p.ano}</strong></td>
@@ -52,7 +75,8 @@ async function enviarEmail(novas) {
         <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px">${p.ementa}</td>
       </tr>`
     ).join('');
-    return header + rows;
+
+    return separador + header + rows;
   }).join('');
 
   const html = `
@@ -73,7 +97,7 @@ async function enviarEmail(novas) {
         <tbody>${linhas}</tbody>
       </table>
       <p style="margin-top:20px;font-size:12px;color:#999">
-        Acesse: <a href="https://sapl.joaopessoa.pb.leg.br/materia/pesquisar-materia">sapl3.al.pb.leg.br</a>
+        Acesse: <a href="https://sapl.joaopessoa.pb.leg.br/materia/pesquisar-materia">sapl.joaopessoa.pb.leg.br</a>
       </p>
     </div>
   `;
@@ -85,7 +109,7 @@ async function enviarEmail(novas) {
     html,
   });
 
-  console.log(`✅ Email enviado com ${novas.length} proposições novas.`);
+  console.log(`✅ Email enviado com ${novas.length} proposições novas (${totalReqs} REQs).`);
 }
 
 async function buscarPagina(ano, page) {
@@ -102,7 +126,7 @@ async function buscarProposicoes() {
   const ano = new Date().getFullYear();
   console.log(`🔍 Buscando proposições de ${ano}...`);
 
-  // Passo 1: descobrir total de páginas com uma chamada rápida
+  // Passo 1: sonda para descobrir total de páginas
   const sonda = await buscarPagina(ano, 1);
   if (!sonda) return [];
 
@@ -110,8 +134,7 @@ async function buscarProposicoes() {
   const totalPaginas = sonda.pagination?.total_pages || 1;
   console.log(`📊 Total na API: ${total} proposições em ${totalPaginas} páginas`);
 
-  // Passo 2: buscar as 2 últimas páginas (onde estão os IDs mais altos)
-  // Isso cobre até 200 proposições novas entre execuções — mais que suficiente
+  // Passo 2: buscar as 2 últimas páginas (IDs mais altos = mais recentes)
   const paginasParaBuscar = [];
   if (totalPaginas >= 2) paginasParaBuscar.push(totalPaginas - 1);
   paginasParaBuscar.push(totalPaginas);
@@ -172,11 +195,16 @@ function normalizarProposicao(p) {
   console.log(`🆕 Proposições novas: ${novas.length}`);
 
   if (novas.length > 0) {
+    // REQ vai para o fim; dentro de cada grupo, número decrescente
     novas.sort((a, b) => {
+      const aReq = a.tipo.startsWith('REQ');
+      const bReq = b.tipo.startsWith('REQ');
+      if (aReq !== bReq) return aReq ? 1 : -1;
       if (a.tipo < b.tipo) return -1;
       if (a.tipo > b.tipo) return 1;
       return (parseInt(b.numero) || 0) - (parseInt(a.numero) || 0);
     });
+
     await enviarEmail(novas);
     novas.forEach(p => idsVistos.add(p.id));
     estado.proposicoes_vistas = Array.from(idsVistos);
@@ -188,4 +216,3 @@ function normalizarProposicao(p) {
     salvarEstado(estado);
   }
 })();
-
