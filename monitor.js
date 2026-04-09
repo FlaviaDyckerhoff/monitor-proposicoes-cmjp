@@ -7,11 +7,26 @@ const EMAIL_SENHA = process.env.EMAIL_SENHA;
 const ARQUIVO_ESTADO = 'estado.json';
 const API_BASE = 'https://sapl.joaopessoa.pb.leg.br/api';
 
-// A API da CMJP ignora o parâmetro ordering e sempre retorna em ordem
-// crescente de ID (menor para maior). As proposições mais recentes estão
-// sempre nas ÚLTIMAS páginas, não na primeira.
-// Estratégia: descobrir o total de páginas e buscar as 2 últimas
-// (200 proposições), cobrindo qualquer volume entre execuções.
+// A API da CMJP ignora ordering e sempre retorna IDs em ordem crescente.
+// REQs são protocolados em volume alto e dominam os IDs mais altos,
+// fazendo PLOs/PLCs novos ficarem enterrados nas páginas do meio.
+//
+// Estratégia em duas camadas:
+// 1. Tipos legislativos principais: busca por tipo separada, últimas 2 páginas de cada
+//    → garante PLO, PLC, IND, VETO, MP, PELO, PDL, PRE nunca sejam perdidos
+// 2. Busca geral: últimas 2 páginas sem filtro de tipo
+//    → captura REQ, OF, MSG e demais que dominam os IDs altos
+
+const TIPOS_PRINCIPAIS = [
+  { id: 1,  sigla: 'PLO'   },  // Projeto de Lei Ordinária
+  { id: 5,  sigla: 'PLC'   },  // Projeto de Lei Complementar
+  { id: 9,  sigla: 'PELO'  },  // Proposta de Emenda à Lei Orgânica
+  { id: 6,  sigla: 'PDL'   },  // Projeto de Decreto Legislativo
+  { id: 2,  sigla: 'PRE'   },  // Projeto de Resolução
+  { id: 18, sigla: 'VETO'  },  // Veto
+  { id: 16, sigla: 'MP'    },  // Medida Provisória
+  { id: 8,  sigla: 'IND'   },  // Indicação
+];
 
 function carregarEstado() {
   if (fs.existsSync(ARQUIVO_ESTADO)) {
@@ -31,9 +46,18 @@ function extrairTipo(str) {
 }
 
 function ordenarTipos(tipos) {
+  // Tipos prioritários primeiro (ordem regimental), REQ e similares no fim
+  const prioridade = [
+    'VETO', 'MEDIDA PROVISÓRIA', 'PROPOSTA DE EMENDA À LEI ORGÂNICA',
+    'PROJETO DE LEI COMPLEMENTAR', 'PROJETO DE LEI ORDINÁRIA',
+    'PROJETO DE RESOLUÇÃO', 'PROJETO DE DECRETO LEGISLATIVO', 'INDICAÇÃO'
+  ];
+  const principais = tipos.filter(t => prioridade.includes(t)).sort((a, b) =>
+    prioridade.indexOf(a) - prioridade.indexOf(b)
+  );
   const reqs = tipos.filter(t => t.startsWith('REQ')).sort();
-  const outros = tipos.filter(t => !t.startsWith('REQ')).sort();
-  return [...outros, ...reqs];
+  const outros = tipos.filter(t => !principais.includes(t) && !reqs.includes(t)).sort();
+  return [...principais, ...outros, ...reqs];
 }
 
 async function enviarEmail(novas) {
@@ -112,44 +136,73 @@ async function enviarEmail(novas) {
   console.log(`✅ Email enviado com ${novas.length} proposições novas (${totalReqs} REQs).`);
 }
 
-async function buscarPagina(ano, page) {
-  const url = `${API_BASE}/materia/materialegislativa/?ano=${ano}&page=${page}&page_size=100`;
+async function buscarPagina(ano, page, tipoId = null) {
+  let url = `${API_BASE}/materia/materialegislativa/?ano=${ano}&page=${page}&page_size=100`;
+  if (tipoId) url += `&tipo=${tipoId}`;
   const response = await fetch(url);
   if (!response.ok) {
-    console.error(`❌ Erro na API (página ${page}): ${response.status}`);
+    console.error(`❌ Erro na API (página ${page}${tipoId ? `, tipo ${tipoId}` : ''}): ${response.status}`);
     return null;
   }
   return await response.json();
 }
 
-async function buscarProposicoes() {
-  const ano = new Date().getFullYear();
-  console.log(`🔍 Buscando proposições de ${ano}...`);
-
-  // Passo 1: sonda para descobrir total de páginas
-  const sonda = await buscarPagina(ano, 1);
+async function buscarUltimasPaginas(ano, tipoId = null, sigla = 'geral') {
+  // Sonda para descobrir total de páginas
+  const sonda = await buscarPagina(ano, 1, tipoId);
   if (!sonda) return [];
 
   const total = sonda.pagination?.total_entries || 0;
   const totalPaginas = sonda.pagination?.total_pages || 1;
-  console.log(`📊 Total na API: ${total} proposições em ${totalPaginas} páginas`);
 
-  // Passo 2: buscar as 2 últimas páginas (IDs mais altos = mais recentes)
+  if (total === 0) return [];
+  console.log(`  📋 [${sigla}] ${total} proposições em ${totalPaginas} páginas`);
+
+  // Buscar as 2 últimas páginas
   const paginasParaBuscar = [];
   if (totalPaginas >= 2) paginasParaBuscar.push(totalPaginas - 1);
   paginasParaBuscar.push(totalPaginas);
 
   const resultados = [];
   for (const pagina of paginasParaBuscar) {
-    console.log(`📄 Buscando página ${pagina} de ${totalPaginas}...`);
-    const dados = await buscarPagina(ano, pagina);
-    if (dados?.results) {
-      resultados.push(...dados.results);
+    const dados = await buscarPagina(ano, pagina, tipoId);
+    if (dados?.results) resultados.push(...dados.results);
+  }
+
+  return resultados;
+}
+
+async function buscarProposicoes() {
+  const ano = new Date().getFullYear();
+  console.log(`🔍 Buscando proposições de ${ano}...`);
+
+  const todasRaw = [];
+  const idsColetados = new Set();
+
+  // Camada 1: tipos legislativos principais — busca por tipo
+  console.log(`\n📌 Tipos legislativos principais:`);
+  for (const tipo of TIPOS_PRINCIPAIS) {
+    const resultados = await buscarUltimasPaginas(ano, tipo.id, tipo.sigla);
+    for (const r of resultados) {
+      if (!idsColetados.has(r.id)) {
+        idsColetados.add(r.id);
+        todasRaw.push(r);
+      }
     }
   }
 
-  console.log(`📦 Proposições carregadas: ${resultados.length}`);
-  return resultados;
+  // Camada 2: busca geral — captura REQ, OF, MSG e demais
+  console.log(`\n📌 Busca geral (REQ, OF, MSG e outros):`);
+  const gerais = await buscarUltimasPaginas(ano, null, 'geral');
+  for (const r of gerais) {
+    if (!idsColetados.has(r.id)) {
+      idsColetados.add(r.id);
+      todasRaw.push(r);
+    }
+  }
+
+  console.log(`\n📦 Total carregado: ${todasRaw.length} proposições`);
+  return todasRaw;
 }
 
 function normalizarProposicao(p) {
@@ -195,11 +248,22 @@ function normalizarProposicao(p) {
   console.log(`🆕 Proposições novas: ${novas.length}`);
 
   if (novas.length > 0) {
-    // REQ vai para o fim; dentro de cada grupo, número decrescente
+    // Ordena: principais primeiro (por tipo regimental), REQ no fim
+    const prioridade = [
+      'VETO', 'MEDIDA PROVISÓRIA', 'PROPOSTA DE EMENDA À LEI ORGÂNICA',
+      'PROJETO DE LEI COMPLEMENTAR', 'PROJETO DE LEI ORDINÁRIA',
+      'PROJETO DE RESOLUÇÃO', 'PROJETO DE DECRETO LEGISLATIVO', 'INDICAÇÃO'
+    ];
     novas.sort((a, b) => {
+      const aIdx = prioridade.indexOf(a.tipo);
+      const bIdx = prioridade.indexOf(b.tipo);
       const aReq = a.tipo.startsWith('REQ');
       const bReq = b.tipo.startsWith('REQ');
+
       if (aReq !== bReq) return aReq ? 1 : -1;
+      if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+      if (aIdx !== -1) return -1;
+      if (bIdx !== -1) return 1;
       if (a.tipo < b.tipo) return -1;
       if (a.tipo > b.tipo) return 1;
       return (parseInt(b.numero) || 0) - (parseInt(a.numero) || 0);
