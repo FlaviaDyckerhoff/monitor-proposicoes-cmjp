@@ -5,7 +5,7 @@ const EMAIL_DESTINO = process.env.EMAIL_DESTINO;
 const EMAIL_REMETENTE = process.env.EMAIL_REMETENTE;
 const EMAIL_SENHA = process.env.EMAIL_SENHA;
 const ARQUIVO_ESTADO = 'estado.json';
-const API_BASE = 'https://sapl.joaopessoa.pb.leg.br/api';
+const API_BASE = 'http://sapl.joaopessoa.pb.leg.br/api';
 
 // A API da CMJP ignora ordering e sempre retorna IDs em ordem crescente.
 // REQs são protocolados em volume alto e dominam os IDs mais altos,
