@@ -5,7 +5,7 @@ const EMAIL_DESTINO = process.env.EMAIL_DESTINO;
 const EMAIL_REMETENTE = process.env.EMAIL_REMETENTE;
 const EMAIL_SENHA = process.env.EMAIL_SENHA;
 const ARQUIVO_ESTADO = 'estado.json';
-const API_BASE = 'http://sapl.joaopessoa.pb.leg.br/api';
+const API_BASE = 'https://sapl.joaopessoa.pb.leg.br/api';
 
 // A API da CMJP ignora ordering e sempre retorna IDs em ordem crescente.
 // REQs são protocolados em volume alto e dominam os IDs mais altos,
@@ -141,8 +141,7 @@ async function buscarPagina(ano, page, tipoId = null) {
   if (tipoId) url += `&tipo=${tipoId}`;
   const response = await fetch(url);
   if (!response.ok) {
-    console.error(`❌ Erro na API (página ${page}${tipoId ? `, tipo ${tipoId}` : ''}): ${response.status}`);
-    return null;
+    throw new Error(`Erro na API (página ${page}${tipoId ? `, tipo ${tipoId}` : ''}): ${response.status}`);
   }
   return await response.json();
 }
@@ -237,8 +236,7 @@ function normalizarProposicao(p) {
   const proposicoesRaw = await buscarProposicoes();
 
   if (proposicoesRaw.length === 0) {
-    console.log('⚠️ Nenhuma proposição encontrada.');
-    process.exit(0);
+    throw new Error('Nenhuma proposição encontrada. Falha provável de coleta/API; workflow deve ficar vermelho.');
   }
 
   const proposicoes = proposicoesRaw.map(normalizarProposicao);
