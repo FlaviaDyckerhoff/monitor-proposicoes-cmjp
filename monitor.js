@@ -1,11 +1,12 @@
 const fs = require('fs');
-const nodemailer = require('nodemailer');
 
 const EMAIL_DESTINO = process.env.EMAIL_DESTINO;
 const EMAIL_REMETENTE = process.env.EMAIL_REMETENTE;
 const EMAIL_SENHA = process.env.EMAIL_SENHA;
 const ARQUIVO_ESTADO = 'estado.json';
 const API_BASE = 'https://sapl.joaopessoa.pb.leg.br/api';
+const CASA_NOME = 'Câmara Municipal de João Pessoa';
+const MATERIA_BASE = 'https://sapl.joaopessoa.pb.leg.br/materia';
 
 // A API da CMJP ignora ordering e sempre retorna IDs em ordem crescente.
 // REQs são protocolados em volume alto e dominam os IDs mais altos,
@@ -65,6 +66,12 @@ function ordenarTipos(tipos) {
 }
 
 async function enviarEmail(novas) {
+  if (process.env.DRY_RUN_EMAIL === '1') {
+    console.log(`[DRY_RUN_EMAIL] ${novas.length} proposições novas.`);
+    novas.slice(0, 20).forEach(p => console.log(`${p.tipo} ${p.numero}/${p.ano} - ${p.link} - ${p.ementa}`));
+    return;
+  }
+  const nodemailer = require('nodemailer');
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: { user: EMAIL_REMETENTE, pass: EMAIL_SENHA },
@@ -97,7 +104,7 @@ async function enviarEmail(novas) {
     const header = `<tr><td colspan="4" style="padding:10px 8px 4px;background:${bgHeader};font-weight:bold;color:${colorHeader};font-size:13px;border-top:2px solid ${borderColor}">${tipo} — ${porTipo[tipo].length} proposição(ões)</td></tr>`;
     const rows = porTipo[tipo].map(p =>
       `<tr>
-        <td style="padding:8px;border-bottom:1px solid #eee"><strong>${p.numero}/${p.ano}</strong></td>
+        <td style="padding:8px;border-bottom:1px solid #eee"><a href="${p.link}" style="color:#1a3a5c;text-decoration:none"><strong>${p.numero}/${p.ano}</strong></a></td>
         <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px;white-space:nowrap">${p.data}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px">${p.autor}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px">${p.ementa}</td>
@@ -110,7 +117,7 @@ async function enviarEmail(novas) {
   const html = `
     <div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto">
       <h2 style="color:#1a3a5c;border-bottom:2px solid #1a3a5c;padding-bottom:8px">
-        🏛️ CMJP — ${novas.length} nova(s) proposição(ões)
+        🏛️ ${CASA_NOME} — ${novas.length} nova(s) proposição(ões)
       </h2>
       <p style="color:#666">Monitoramento automático — ${new Date().toLocaleString('pt-BR')}</p>
       <table style="width:100%;border-collapse:collapse;font-size:14px">
@@ -131,9 +138,9 @@ async function enviarEmail(novas) {
   `;
 
   await transporter.sendMail({
-    from: `"Monitor CMJP" <${EMAIL_REMETENTE}>`,
+    from: `"Monitor ${CASA_NOME}" <${EMAIL_REMETENTE}>`,
     to: EMAIL_DESTINO,
-    subject: `🏛️ CMJP: ${novas.length} nova(s) proposição(ões) — ${new Date().toLocaleDateString('pt-BR')}`,
+    subject: `🏛️ ${CASA_NOME}: ${novas.length} nova(s) proposição(ões) — ${new Date().toLocaleDateString('pt-BR')}`,
     html,
   });
 
@@ -242,6 +249,7 @@ function normalizarProposicao(p) {
     tipo,
     numero: p.numero || '-',
     ano: p.ano || '-',
+    link: `${MATERIA_BASE}/${p.id}`,
     autor,
     data: p.data_apresentacao || '-',
     ementa: (p.ementa || '-').substring(0, 200),
@@ -266,6 +274,12 @@ function normalizarProposicao(p) {
 
   const novas = proposicoes.filter(p => !idsVistos.has(p.id));
   console.log(`🆕 Proposições novas: ${novas.length}`);
+
+  if (process.env.DRY_RUN_EMAIL === '1') {
+    await enviarEmail(novas);
+    console.log('DRY_RUN_EMAIL=1 — estado preservado sem alterações.');
+    return;
+  }
 
   if (novas.length > 0) {
     // Ordena: principais primeiro (por tipo regimental), REQ no fim
