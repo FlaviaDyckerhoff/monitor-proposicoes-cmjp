@@ -28,6 +28,10 @@ const TIPOS_PRINCIPAIS = [
   { id: 8,  sigla: 'IND'   },  // Indicação
 ];
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function carregarEstado() {
   if (fs.existsSync(ARQUIVO_ESTADO)) {
     return JSON.parse(fs.readFileSync(ARQUIVO_ESTADO, 'utf8'));
@@ -139,11 +143,27 @@ async function enviarEmail(novas) {
 async function buscarPagina(ano, page, tipoId = null) {
   let url = `${API_BASE}/materia/materialegislativa/?ano=${ano}&page=${page}&page_size=100`;
   if (tipoId) url += `&tipo=${tipoId}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Erro na API (página ${page}${tipoId ? `, tipo ${tipoId}` : ''}): ${response.status}`);
+
+  for (let tentativa = 1; tentativa <= 4; tentativa++) {
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0 (compatible; MonitorLegislativo/1.0; +https://monitorlegislativo.com.br)',
+      },
+    });
+
+    if (response.ok) return await response.json();
+
+    const retryable = response.status === 429 || response.status >= 500;
+    if (!retryable || tentativa === 4) {
+      throw new Error(`Erro na API (página ${page}${tipoId ? `, tipo ${tipoId}` : ''}): ${response.status}`);
+    }
+
+    const retryAfter = Number(response.headers.get('retry-after') || 0);
+    const esperaMs = retryAfter > 0 ? retryAfter * 1000 : tentativa * 10000;
+    console.warn(`⚠️ API retornou ${response.status}; nova tentativa em ${Math.round(esperaMs / 1000)}s (${tentativa}/4)`);
+    await sleep(esperaMs);
   }
-  return await response.json();
 }
 
 async function buscarUltimasPaginas(ano, tipoId = null, sigla = 'geral') {
@@ -164,6 +184,7 @@ async function buscarUltimasPaginas(ano, tipoId = null, sigla = 'geral') {
 
   const resultados = [];
   for (const pagina of paginasParaBuscar) {
+    await sleep(1500);
     const dados = await buscarPagina(ano, pagina, tipoId);
     if (dados?.results) resultados.push(...dados.results);
   }
@@ -181,6 +202,7 @@ async function buscarProposicoes() {
   // Camada 1: tipos legislativos principais — busca por tipo
   console.log(`\n📌 Tipos legislativos principais:`);
   for (const tipo of TIPOS_PRINCIPAIS) {
+    await sleep(1500);
     const resultados = await buscarUltimasPaginas(ano, tipo.id, tipo.sigla);
     for (const r of resultados) {
       if (!idsColetados.has(r.id)) {
