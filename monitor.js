@@ -8,6 +8,21 @@ const API_BASE = 'https://sapl.joaopessoa.pb.leg.br/api';
 const CASA_NOME = 'Câmara Municipal de João Pessoa';
 const MATERIA_BASE = 'https://sapl.joaopessoa.pb.leg.br/materia';
 
+const ABRASEL_PB_TERMOS = [
+  'Abrasel', 'Abrasel PB', 'Abrasel Paraíba',
+  'bar', 'bares', 'restaurante', 'restaurantes', 'lanchonete', 'lanchonetes',
+  'alimentação fora do lar', 'refeição', 'refeições', 'alimento', 'alimentos',
+  'delivery', 'entrega de alimentos', 'aplicativo de entrega', 'ifood',
+  'bebida alcoólica', 'bebidas alcoólicas', 'cerveja', 'cachaça', 'drink',
+  'funcionamento de bares', 'funcionamento de restaurantes', 'horário de funcionamento',
+  'alvará', 'licença de funcionamento', 'vigilância sanitária', 'inspeção sanitária',
+  'taxa de turismo', 'turismo', 'turístico', 'turística', 'hotel', 'hotéis', 'hospedagem',
+  'evento', 'eventos', 'show', 'shows', 'festival', 'festivais', 'feira gastronômica',
+  'food truck', 'ambulante', 'comércio ambulante', 'uso de calçada', 'calçada',
+  'parklet', 'mesa e cadeira', 'mesas e cadeiras', 'cardápio', 'couvert',
+  'taxa de serviço', 'consumidor', 'acessibilidade'
+];
+
 // A API da CMJP ignora ordering e sempre retorna IDs em ordem crescente.
 // REQs são protocolados em volume alto e dominam os IDs mais altos,
 // fazendo PLOs/PLCs novos ficarem enterrados nas páginas do meio.
@@ -65,6 +80,53 @@ function ordenarTipos(tipos) {
   return [...principais, ...outros, ...reqs];
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function classificarAbraselPb(p) {
+  const texto = [p.tipo, p.numero, p.ano, p.autor, p.ementa].join(' ');
+  const normalizado = texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const termos = ABRASEL_PB_TERMOS.filter(termo => {
+    const alvo = termo.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (/^[a-z0-9]+$/.test(alvo)) {
+      return new RegExp('(^|[^a-z0-9])' + escapeRegExp(alvo) + '([^a-z0-9]|$)').test(normalizado);
+    }
+    return normalizado.includes(alvo);
+  });
+  return [...new Set(termos)];
+}
+
+function destacarTermos(texto, termos) {
+  let html = escapeHtml(texto);
+  termos
+    .filter(termo => termo.length >= 3)
+    .sort((a, b) => b.length - a.length)
+    .forEach(termo => {
+      html = html.replace(
+        new RegExp(escapeRegExp(escapeHtml(termo)), 'gi'),
+        match => '<mark style="background:#fff3a3;padding:0 2px;border-radius:2px">' + match + '</mark>'
+      );
+    });
+  return html;
+}
+
+function renderAbraselBadge(p) {
+  if (!p.abraselPb?.length) return '';
+  const termos = p.abraselPb.slice(0, 5).map(escapeHtml).join(', ');
+  const extra = p.abraselPb.length > 5 ? ' +' + (p.abraselPb.length - 5) : '';
+  return '<div style="margin-top:6px;color:#7a3b00;font-size:11px"><strong>🍽️ Abrasel PB:</strong> ' + termos + extra + '</div>';
+}
+
 async function enviarEmail(novas) {
   if (process.env.DRY_RUN_EMAIL === '1') {
     console.log(`[DRY_RUN_EMAIL] ${novas.length} proposições novas.`);
@@ -98,16 +160,17 @@ async function enviarEmail(novas) {
     const borderColor = isReq ? '#5c3a1a' : '#1a3a5c';
 
     const separador = (isReq && idx === primeiroReqIdx && totalOutros > 0)
-      ? `<tr><td colspan="4" style="padding:8px;background:#fff8f0;font-size:12px;color:#999;border-top:3px dashed #ddd;text-align:center">⬇️ Requerimentos (${totalReqs})</td></tr>`
+      ? `<tr><td colspan="5" style="padding:8px;background:#fff8f0;font-size:12px;color:#999;border-top:3px dashed #ddd;text-align:center">⬇️ Requerimentos (${totalReqs})</td></tr>`
       : '';
 
-    const header = `<tr><td colspan="4" style="padding:10px 8px 4px;background:${bgHeader};font-weight:bold;color:${colorHeader};font-size:13px;border-top:2px solid ${borderColor}">${tipo} — ${porTipo[tipo].length} proposição(ões)</td></tr>`;
+    const header = `<tr><td colspan="5" style="padding:10px 8px 4px;background:${bgHeader};font-weight:bold;color:${colorHeader};font-size:13px;border-top:2px solid ${borderColor}">${tipo} — ${porTipo[tipo].length} proposição(ões)</td></tr>`;
     const rows = porTipo[tipo].map(p =>
       `<tr>
         <td style="padding:8px;border-bottom:1px solid #eee"><a href="${p.link}" style="color:#1a3a5c;text-decoration:none"><strong>${p.numero}/${p.ano}</strong></a></td>
         <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px;white-space:nowrap">${p.data}</td>
         <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px">${p.autor}</td>
-        <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px">${p.ementa}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px">${p.abraselPb?.length ? '🍽️ Abrasel PB' : ''}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px">${destacarTermos(p.ementa, p.abraselPb || [])}${renderAbraselBadge(p)}</td>
       </tr>`
     ).join('');
 
@@ -126,6 +189,7 @@ async function enviarEmail(novas) {
             <th style="padding:10px;text-align:left">Número/Ano</th>
             <th style="padding:10px;text-align:left">Data</th>
             <th style="padding:10px;text-align:left">Autor</th>
+            <th style="padding:10px;text-align:left">Interesse</th>
             <th style="padding:10px;text-align:left">Ementa</th>
           </tr>
         </thead>
@@ -244,7 +308,7 @@ function normalizarProposicao(p) {
     }
   }
 
-  return {
+  const normalizada = {
     id: p.id,
     tipo,
     numero: p.numero || '-',
@@ -252,8 +316,10 @@ function normalizarProposicao(p) {
     link: `${MATERIA_BASE}/${p.id}`,
     autor,
     data: p.data_apresentacao || '-',
-    ementa: (p.ementa || '-').substring(0, 200),
+    ementa: (p.ementa || '-').substring(0, 300),
   };
+  normalizada.abraselPb = classificarAbraselPb(normalizada);
+  return normalizada;
 }
 
 (async () => {
