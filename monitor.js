@@ -316,7 +316,7 @@ function normalizarProposicao(p) {
     link: `${MATERIA_BASE}/${p.id}`,
     autor,
     data: p.data_apresentacao || '-',
-    ementa: (p.ementa || '-').substring(0, 300),
+    ementa: String(p.ementa || '-').replace(/\s+/g, ' ').trim() || '-',
   };
   normalizada.abraselPb = classificarAbraselPb(normalizada);
   return normalizada;
