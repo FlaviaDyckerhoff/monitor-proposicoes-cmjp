@@ -127,7 +127,39 @@ function renderAbraselBadge(p) {
   return '<div style="margin-top:6px;color:#7a3b00;font-size:11px"><strong>🍽️ Abrasel PB:</strong> ' + termos + extra + '</div>';
 }
 
+
+const CLIENTES_NOMES_PROPRIOS = [
+  'FIRJAN', 'Red Bull', 'Sindicerv', 'Boticario', 'Boticário', 'Abrasel', 'ANBRASEL',
+  'Energisa', 'EnergisaLuz', 'SABESP', 'COMGAS', 'COMGÁS', 'Eletromidia', 'Eletromídia',
+  'BRT', 'Regenera', 'Nova Infra', 'Seta', 'SETA', 'AkzoNobel', 'Expedia', 'RTSC',
+  'Huawei', 'Carrefour', 'JBS', 'Ajinomoto', 'Vibra', 'Mindlab', 'ABVTEX', 'Neoenergia', 'ENEL'
+];
+
+function clientesCitadosNaProposicao(p) {
+  const texto = [p.cliente, p.clientes, p.autor, p.autores, p.tipo, p.rotulo, p.titulo, p.identificacao, p.ementa]
+    .filter(Boolean)
+    .join(' ');
+  const achados = [];
+  for (const nome of CLIENTES_NOMES_PROPRIOS) {
+    const escaped = nome.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(^|[^A-Za-zÀ-ÿ0-9])' + escaped + '([^A-Za-zÀ-ÿ0-9]|$)', 'i');
+    if (re.test(texto) && !achados.some(a => a.toLowerCase() === nome.toLowerCase())) achados.push(nome);
+  }
+  return achados;
+}
+
+function anotarClientesCitados(proposicoes) {
+  for (const p of proposicoes || []) {
+    const clientes = clientesCitadosNaProposicao(p);
+    p.clientesCitados = clientes;
+    if (clientes.length && p.ementa && !String(p.ementa).includes('Cliente citado:')) {
+      p.ementa = String(p.ementa).trim() + ' | Cliente citado: ' + clientes.join(', ');
+    }
+  }
+}
+
 async function enviarEmail(novas) {
+  anotarClientesCitados(novas);
   if (process.env.DRY_RUN_EMAIL === '1') {
     console.log(`[DRY_RUN_EMAIL] ${novas.length} proposições novas.`);
     novas.slice(0, 20).forEach(p => console.log(`${p.tipo} ${p.numero}/${p.ano} - ${p.link} - ${p.ementa}`));
