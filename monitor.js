@@ -6,6 +6,7 @@ const EMAIL_SENHA = process.env.EMAIL_SENHA;
 const ARQUIVO_ESTADO = 'estado.json';
 const API_BASE = 'https://sapl.joaopessoa.pb.leg.br/api';
 const CASA_NOME = 'Câmara Municipal de João Pessoa';
+const EMAIL_LOCALIDADE = 'João Pessoa';
 const MATERIA_BASE = 'https://sapl.joaopessoa.pb.leg.br/materia';
 
 const ABRASEL_PB_TERMOS = [
@@ -309,7 +310,7 @@ async function enviarEmail(novas) {
   await transporter.sendMail({
     from: `"Monitor ${CASA_NOME}" <${EMAIL_REMETENTE}>`,
     to: EMAIL_DESTINO,
-    subject: `🏛️ ${CASA_NOME}: ${novas.length} nova(s) proposição(ões) — ${new Date().toLocaleDateString('pt-BR')}`,
+    subject: `🏛️ ${EMAIL_LOCALIDADE}: ${novas.length} nova(s) proposição(ões) — ${new Date().toLocaleDateString('pt-BR')}`,
     html,
   });
 
