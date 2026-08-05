@@ -786,6 +786,7 @@ function normalizarProposicao(p) {
       return Number(b.numero) - Number(a.numero);
     });
 
+    await sincronizarRadar03(novas);
     await enviarEmail(novas);
     novas.forEach(p => idsVistos.add(p.id));
     estado.proposicoes_vistas = Array.from(idsVistos);
