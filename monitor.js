@@ -197,6 +197,7 @@ function clienteAtivoParaDestaque(nome) {
   return !CLIENTES_INATIVOS_NAO_DESTACAR.some(inativo => inativo.toLowerCase() === String(nome || '').toLowerCase());
 }
 
+
 let promoverInteresseClienteProposicao = (_item, atuais) => Array.isArray(atuais) ? atuais : [];
 try {
   try {
@@ -206,6 +207,14 @@ try {
   }
 } catch (err) {
   console.warn('⚠️ Matcher cliente/palavra comum indisponível; usando destaque legado: ' + err.message);
+}
+
+function mlClientInterestContext() {
+  return {
+    uf: typeof CLIENT_INTEREST_UF !== 'undefined' ? CLIENT_INTEREST_UF : (process.env.CLIENT_INTEREST_UF || process.env.UF || ''),
+    municipio: typeof CLIENT_INTEREST_MUNICIPIO !== 'undefined' ? CLIENT_INTEREST_MUNICIPIO : (process.env.CLIENT_INTEREST_MUNICIPIO || process.env.MUNICIPIO || ''),
+    casa: typeof CASA_RADAR03 !== 'undefined' ? CASA_RADAR03 : (process.env.CASA_RADAR03 || process.env.CASA || ''),
+  };
 }
 
 function clientesCitadosNaProposicao(p) {
@@ -571,13 +580,6 @@ async function enviarEmail(novas) {
   }
   const nodemailer = require('nodemailer');
 
-function mlClientInterestContext() {
-  return {
-    uf: typeof CLIENT_INTEREST_UF !== 'undefined' ? CLIENT_INTEREST_UF : (process.env.CLIENT_INTEREST_UF || process.env.UF || ''),
-    municipio: typeof CLIENT_INTEREST_MUNICIPIO !== 'undefined' ? CLIENT_INTEREST_MUNICIPIO : (process.env.CLIENT_INTEREST_MUNICIPIO || process.env.MUNICIPIO || ''),
-    casa: typeof CASA_RADAR03 !== 'undefined' ? CASA_RADAR03 : (process.env.CASA_RADAR03 || process.env.CASA || ''),
-  };
-}
 
   const transporter = nodemailer.createTransport({
     service: 'gmail',
